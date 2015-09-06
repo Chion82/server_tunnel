@@ -77,6 +77,7 @@ void *run_client_side_server(void* ptr) {
 	while (1) {
 		int transaction_sock = accept(listen_sock, (struct sockaddr*)NULL, NULL);
 		pthread_create(&tmp_thread, NULL, map_client_side_socket_thread, (void*)&transaction_sock);
+		pthread_detach(tmp_thread);
 	}
 
 	return NULL;
@@ -101,6 +102,13 @@ void* map_client_side_socket_thread(void* ptr) {
 		}
 		if (strcmp(map_queue[i].recognize_code, recognize_code) == 0) {
 			map_queue[i].client_side_sock = transaction_sock;
+			if (send(transaction_sock, "ACK", 4, MSG_NOSIGNAL)<0) {
+				printf("Connection from client lost.\n");
+				close(transaction_sock);
+				map_queue[i].user_sock = 0;
+				map_queue[i].client_side_sock = 0;
+				map_queue[i].recognize_code = NULL;
+			}
 			return NULL;
 		}
 	}
@@ -119,21 +127,41 @@ int push_and_wait_for_client(int* client_trans_sock, int user_sock, struct serve
 		printf("Client connection not found. Exiting...\n");
 		return -1;
 	}
-	printf("recognize_code sent. code=%s\n", buf);
+	printf("recognize_code sent. buf=%s\n", buf);
 	int i=0;
 	int flag = 0;
-	while(!flag) {
-		for (i=0;i<128;i++) {
-			if (map_queue[i].user_sock == 0 && map_queue[i].client_side_sock == 0 && map_queue[i].recognize_code == NULL) {
-				map_queue[i].user_sock = user_sock;
-				map_queue[i].client_side_sock = 0;
-				map_queue[i].recognize_code = recognize_code;
-				flag = 1;
-				break;
-			}
+	char ack_tmp_buf[10];
+	if (recv(notification_sock, ack_tmp_buf, 10, 0)<=0) {
+		printf("Client connection not found. Exiting...\n");
+		return -1;		
+	}
+	
+	for (i=0;i<128;i++) {
+		if (map_queue[i].user_sock == 0 && map_queue[i].client_side_sock == 0 && map_queue[i].recognize_code == NULL) {
+			map_queue[i].user_sock = user_sock;
+			map_queue[i].client_side_sock = 0;
+			map_queue[i].recognize_code = recognize_code;
+			flag = 1;
+			break;
 		}
 	}
-	while (map_queue[i].client_side_sock == 0);
+	if (!flag) {
+		printf("Queue full!\n");
+		return -1;
+	}
+	
+	int wait_count = 0;
+	while (map_queue[i].client_side_sock == 0) {
+		usleep(1000);
+		wait_count++;
+		if (wait_count>=10*1000) {
+			printf("Client timeout.\n");
+			map_queue[i].user_sock = 0;
+			map_queue[i].client_side_sock = 0;
+			map_queue[i].recognize_code = NULL;
+			return -1;
+		}
+	}
 	printf("Client side connected. recognize_code=%s\n", recognize_code);
 	*client_trans_sock = map_queue[i].client_side_sock;
 	map_queue[i].user_sock = 0;
@@ -159,6 +187,8 @@ void* run_user_side_server(void* ptr){
 		tmp_bundle.user_sock = trans_sock;
 		tmp_bundle.config = config;
 		pthread_create(&tmp_thread, NULL, transaction_thread, (void*)&tmp_bundle);
+		pthread_detach(tmp_thread);
+		usleep(50*1000);
 	}
 
 	return NULL;
@@ -181,8 +211,8 @@ void *transaction_thread(void* thread_bundle) {
 	fd_set user_set, client_set;
 
 	struct timeval timeout;
-	timeout.tv_sec = 1;
-	timeout.tv_usec = 0;
+	timeout.tv_sec = 0;
+	timeout.tv_usec = 300*1000;
 
 
 
@@ -259,10 +289,12 @@ int main(int argc, char* argv[]) {
 	printf("Init notification server...\n");
 	pthread_t notification_listen_thread;
 	pthread_create(&notification_listen_thread, NULL, notification_server, NULL);
+	pthread_detach(notification_listen_thread);
 
 	printf("Init client side server...\n");
 	pthread_t client_listen_thread;
 	pthread_create(&client_listen_thread, NULL, run_client_side_server, NULL);
+	pthread_detach(client_listen_thread);
 
 
 	for (i=0;i<count;i++) {
@@ -271,6 +303,7 @@ int main(int argc, char* argv[]) {
 		printf("Init user side server...\n");
 		pthread_t user_listen_thread;
 		pthread_create(&user_listen_thread, NULL, run_user_side_server, (void*)(config+i));
+		pthread_detach(user_listen_thread);
 
 	}
 

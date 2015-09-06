@@ -29,6 +29,7 @@ struct conn_info {
 
 int hostname_to_ip(char * hostname , char* ip);
 void *run_transaction(void* ptr);
+void *run_heart_beat_client(void* ptr);
 
 void *run_notification_client(void* ptr) {
 	char* server_host = (char*)ptr;
@@ -38,6 +39,7 @@ void *run_notification_client(void* ptr) {
 	int lan_server_port;
 	struct conn_info tmp_conn_info;
 	pthread_t tmp_trans_thread;
+	pthread_t heart_beat_thread;
 
 	while (1) {
 		if (hostname_to_ip(server_host, server_ip)) {
@@ -54,15 +56,22 @@ void *run_notification_client(void* ptr) {
 			sleep(1);
 		}
 		printf("Server connected.\n");
-
+		pthread_create(&heart_beat_thread, NULL, run_heart_beat_client, (void*)&notification_socket);
+		pthread_detach(heart_beat_thread);
 		while(1) {
+
 			int bytes_read = recv(notification_socket, buf, 128, 0);
 			if (bytes_read<=0) {
 				printf("Connection lost. Re-connecting.\n");
 				close(notification_socket);
 				break;
 			}
-			printf("New connection.\n");
+			if (send(notification_socket, "ACK", 4, MSG_NOSIGNAL)<0) {
+				printf("Connection lost. Re-connecting.\n");
+				close(notification_socket);
+				break;
+			}
+			printf("New connection. buf=%s\n", buf);
 			char* devider = strstr(buf, "|");
 			char* recognize_code = (char*)malloc(devider-buf+1);
 			memset(recognize_code, '\0', devider-buf+1);
@@ -75,7 +84,22 @@ void *run_notification_client(void* ptr) {
 			tmp_conn_info.server_ip = server_ip;
 			tmp_conn_info.server_port = SERVER_TRANSACT_PORT;
 			pthread_create(&tmp_trans_thread, NULL, run_transaction, (void*)&tmp_conn_info);
+			pthread_detach(tmp_trans_thread);
+
+			usleep(50*1000);
 		}
+	}
+	return NULL;
+}
+
+void *run_heart_beat_client(void* ptr) {
+	int notification_socket = *((int*)ptr);
+	while (1) {
+		printf("Sending heart beat package.\n");
+		if (send(notification_socket, "", 1, MSG_NOSIGNAL)<0) {
+			break;
+		}
+		sleep(120);
 	}
 	return NULL;
 }
@@ -132,11 +156,18 @@ void *run_transaction(void* ptr) {
 	free(lan_server_ip);
 	free(recognize_code);
 
+	char ack_tmp_buf[10];
+	if (recv(server_trans_sock, ack_tmp_buf, 10, 0)<=0) {
+		close(server_trans_sock);
+		close(lan_trans_sock);
+		return NULL;
+	}
+
 	fd_set lan_set, server_set;
 
 	struct timeval timeout;
-	timeout.tv_sec = 1;
-	timeout.tv_usec = 0;
+	timeout.tv_sec = 0;
+	timeout.tv_usec = 300*1000;
 
 	char trans_buf[1024];
 	int bytes_read = 0;
@@ -231,6 +262,7 @@ int hostname_to_ip(char * hostname , char* ip)
 int main(int argc, char* argv[]) {
 	pthread_t notification_thread;
 	pthread_create(&notification_thread, NULL, run_notification_client, (void*)(argv[1]));
+	pthread_detach(notification_thread);
 
 	while(1)
 		sleep(1);
