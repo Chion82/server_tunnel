@@ -154,7 +154,7 @@ void *run_transaction(void* ptr) {
 
 	usleep(5*1000);
 
-	fd_set lan_set, server_set;
+	fd_set trans_sock_set;
 
 	struct timeval timeout;
 	timeout.tv_sec = 0;
@@ -166,27 +166,20 @@ void *run_transaction(void* ptr) {
 	printf("Transaction start.\n");
 
 	while (1) {
-		FD_ZERO(&lan_set);
-		FD_ZERO(&server_set);
-		FD_SET(lan_trans_sock, &lan_set);
-		FD_SET(server_trans_sock, &server_set);
+		FD_ZERO(&trans_sock_set);
+		FD_SET(lan_trans_sock, &trans_sock_set);
+		FD_SET(server_trans_sock, &trans_sock_set);
 
-		int server_select_result = select(server_trans_sock+1, &server_set, NULL, NULL, &timeout);
-		if (server_select_result<0) {
-			printf("Server select error.\n");
+		int select_result = select((lan_trans_sock>server_trans_sock?lan_trans_sock:server_trans_sock)+1, &trans_sock_set, NULL, NULL, &timeout);
+		if (select_result<0) {
+			printf("Select error.\n");
 			close(server_trans_sock);
 			close(lan_trans_sock);
 			break;
 		}
-		int lan_select_result = select(lan_trans_sock+1, &lan_set, NULL, NULL, &timeout);
-		if (lan_select_result<0) {
-			printf("Lan select error.\n");
-			close(server_trans_sock);
-			close(lan_trans_sock);
-			break;
-		}
+		
 
-		if (server_select_result>0) {
+		if (FD_ISSET(server_trans_sock, &trans_sock_set)) {
 			//printf("Package from server\n");
 			bytes_read = read(server_trans_sock, trans_buf, 1024);
 			if (bytes_read<=0) {
@@ -203,7 +196,7 @@ void *run_transaction(void* ptr) {
 			}
 		}
 
-		if (lan_select_result>0) {
+		if (FD_ISSET(lan_trans_sock, &trans_sock_set)) {
 			//printf("Package from lan\n");
 			bytes_read = read(lan_trans_sock, trans_buf, 1024);
 			if (bytes_read<=0) {

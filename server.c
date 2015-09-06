@@ -198,34 +198,25 @@ void *transaction_thread(void* thread_bundle) {
 	char trans_buf[1024];
 	int bytes_read = 0;
 
-	fd_set user_set, client_set;
+	fd_set trans_sock_set;
 
 	struct timeval timeout;
 	timeout.tv_sec = 0;
 	timeout.tv_usec = 300*1000;
 
-
-
 	while (1) {
-		FD_ZERO(&user_set);
-		FD_ZERO(&client_set);
-		FD_SET(user_sock, &user_set);
-		FD_SET(client_sock, &client_set);
-		int user_select_result = select(user_sock+1, &user_set, NULL, NULL, &timeout);
-		if (user_select_result<0) {
-			printf("user_sock select error.\n");
+		FD_ZERO(&trans_sock_set);
+		FD_SET(user_sock, &trans_sock_set);
+		FD_SET(client_sock, &trans_sock_set);
+		int select_result = select((user_sock>client_sock?user_sock:client_sock)+1, &trans_sock_set, NULL, NULL, &timeout);
+		if (select_result<0) {
+			printf("Select error.\n");
 			close(user_sock);
 			close(client_sock);
 			break;
 		}
-		int client_select_result = select(client_sock+1, &client_set, NULL, NULL, &timeout);
-		if (client_select_result<0) {
-			printf("client_sock select error.\n");
-			close(user_sock);
-			close(client_sock);
-			break;
-		}
-		if (user_select_result>0) {
+		
+		if (FD_ISSET(user_sock, &trans_sock_set)) {
 			bytes_read = read(user_sock, trans_buf, 1024);
 			if (bytes_read<=0) {
 				printf("User connection closed.\n");
@@ -240,7 +231,7 @@ void *transaction_thread(void* thread_bundle) {
 				break;
 			}
 		}
-		if (client_select_result>0) {
+		if (FD_ISSET(client_sock, &trans_sock_set)) {
 			bytes_read = read(client_sock, trans_buf, 1024);
 			if (bytes_read<=0) {
 				printf("Client connection closed.\n");
