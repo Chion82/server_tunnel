@@ -88,6 +88,7 @@ void* map_client_side_socket_thread(void* ptr) {
 	char buf[32], *recognize_code;
 	int transaction_sock = *((int*)ptr);
 	int buf_len = recv(transaction_sock, buf, 32, 0);
+	usleep(5*1000);
 	if (buf_len<=0) {
 		printf("Client connection lost.\n");
 		close(transaction_sock);
@@ -102,13 +103,6 @@ void* map_client_side_socket_thread(void* ptr) {
 		}
 		if (strcmp(map_queue[i].recognize_code, recognize_code) == 0) {
 			map_queue[i].client_side_sock = transaction_sock;
-			if (send(transaction_sock, "ACK", 4, MSG_NOSIGNAL)<0) {
-				printf("Connection from client lost.\n");
-				close(transaction_sock);
-				map_queue[i].user_sock = 0;
-				map_queue[i].client_side_sock = 0;
-				map_queue[i].recognize_code = NULL;
-			}
 			return NULL;
 		}
 	}
@@ -130,11 +124,7 @@ int push_and_wait_for_client(int* client_trans_sock, int user_sock, struct serve
 	printf("recognize_code sent. buf=%s\n", buf);
 	int i=0;
 	int flag = 0;
-	char ack_tmp_buf[10];
-	if (recv(notification_sock, ack_tmp_buf, 10, 0)<=0) {
-		printf("Client connection not found. Exiting...\n");
-		return -1;		
-	}
+	usleep(5*1000);
 	
 	for (i=0;i<128;i++) {
 		if (map_queue[i].user_sock == 0 && map_queue[i].client_side_sock == 0 && map_queue[i].recognize_code == NULL) {

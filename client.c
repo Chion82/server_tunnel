@@ -66,11 +66,7 @@ void *run_notification_client(void* ptr) {
 				close(notification_socket);
 				break;
 			}
-			if (send(notification_socket, "ACK", 4, MSG_NOSIGNAL)<0) {
-				printf("Connection lost. Re-connecting.\n");
-				close(notification_socket);
-				break;
-			}
+			usleep(5*1000);
 			printf("New connection. buf=%s\n", buf);
 			char* devider = strstr(buf, "|");
 			char* recognize_code = (char*)malloc(devider-buf+1);
@@ -156,12 +152,7 @@ void *run_transaction(void* ptr) {
 	free(lan_server_ip);
 	free(recognize_code);
 
-	char ack_tmp_buf[10];
-	if (recv(server_trans_sock, ack_tmp_buf, 10, 0)<=0) {
-		close(server_trans_sock);
-		close(lan_trans_sock);
-		return NULL;
-	}
+	usleep(5*1000);
 
 	fd_set lan_set, server_set;
 
