@@ -31,11 +31,14 @@ int hostname_to_ip(char * hostname , char* ip);
 void *run_transaction(void* ptr);
 void *run_heart_beat_client(void* ptr);
 
+long conn_success_count = 0;
+long conn_count = 0;
+
 void *run_notification_client(void* ptr) {
 	char* server_host = (char*)ptr;
 	char server_ip[100];
 	struct sockaddr_in server_addr;
-	char buf[128];
+	char buf[48];
 	int lan_server_port;
 	struct conn_info tmp_conn_info;
 	pthread_t tmp_trans_thread;
@@ -59,18 +62,21 @@ void *run_notification_client(void* ptr) {
 		pthread_create(&heart_beat_thread, NULL, run_heart_beat_client, (void*)&notification_socket);
 		pthread_detach(heart_beat_thread);
 		while(1) {
-
-			int bytes_read = recv(notification_socket, buf, 128, 0);
+			memset(buf, '\0', 48);
+			int bytes_read = recv(notification_socket, buf, 48, 0);
 			if (bytes_read<=0) {
-				printf("Connection lost. Re-connecting.\n");
+				printf("Notification connection lost. Re-connecting.\n");
 				close(notification_socket);
 				break;
 			}
-			usleep(5*1000);
+
+			conn_count++;
+			printf("Connection count=%d\n", conn_count);
+			
 			printf("New connection. buf=%s\n", buf);
 			char* devider = strstr(buf, "|");
-			char* recognize_code = (char*)malloc(devider-buf+1);
-			memset(recognize_code, '\0', devider-buf+1);
+			char* recognize_code = (char*)malloc(32);
+			memset(recognize_code, '\0', 32);
 			memcpy(recognize_code, buf, devider-buf);
 			char* lan_server_ip = (char*)malloc(32);
 			sscanf(devider+1, "%d|%s", &lan_server_port, lan_server_ip);
@@ -79,10 +85,10 @@ void *run_notification_client(void* ptr) {
 			tmp_conn_info.recognize_code = recognize_code;
 			tmp_conn_info.server_ip = server_ip;
 			tmp_conn_info.server_port = SERVER_TRANSACT_PORT;
+
 			pthread_create(&tmp_trans_thread, NULL, run_transaction, (void*)&tmp_conn_info);
 			pthread_detach(tmp_trans_thread);
 
-			usleep(200*1000);
 		}
 	}
 	return NULL;
@@ -140,7 +146,7 @@ void *run_transaction(void* ptr) {
 	}
 
 	printf("Sending recognize_code.\n");
-	if (send(server_trans_sock, recognize_code, strlen(recognize_code)+1, MSG_NOSIGNAL)<0) {
+	if (send(server_trans_sock, recognize_code, 32, MSG_NOSIGNAL)<0) {
 		printf("Connection to server lost.\n");
 		close(server_trans_sock);
 		close(lan_trans_sock);
@@ -152,7 +158,7 @@ void *run_transaction(void* ptr) {
 	free(lan_server_ip);
 	free(recognize_code);
 
-	usleep(5*1000);
+	usleep(50*1000);
 
 	fd_set trans_sock_set;
 
@@ -164,6 +170,9 @@ void *run_transaction(void* ptr) {
 	int bytes_read = 0;
 
 	printf("Transaction start.\n");
+
+	conn_success_count++;
+	printf("Successful connection count=%d\n", conn_count);
 
 	while (1) {
 		FD_ZERO(&trans_sock_set);

@@ -43,9 +43,11 @@ void *transaction_thread(void* thread_bundle);
 
 struct socket_map map_queue[128];
 
-int notification_sock = 0;
+int notification_sock = -1;
 
 pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
+
+long conn_count = 0;
 
 void *notification_server(void* ptr) {
 	int listen_sock = socket(AF_INET, SOCK_STREAM, 0);
@@ -58,7 +60,7 @@ void *notification_server(void* ptr) {
 	listen(listen_sock, 10);
 	while (1) {
 		notification_sock = accept(listen_sock, (struct sockaddr*)NULL, NULL);
-		printf("Client connection established.\n");
+		printf("Client notification connection established.\n");
 	}
 
 	return NULL;
@@ -78,6 +80,7 @@ void *run_client_side_server(void* ptr) {
 	listen(listen_sock, SOMAXCONN);
 	while (1) {
 		int transaction_sock = accept(listen_sock, (struct sockaddr*)NULL, NULL);
+		printf("New client connection.\n");
 		pthread_create(&tmp_thread, NULL, map_client_side_socket_thread, (void*)&transaction_sock);
 		pthread_detach(tmp_thread);
 	}
@@ -89,13 +92,16 @@ void *run_client_side_server(void* ptr) {
 void* map_client_side_socket_thread(void* ptr) {
 	char buf[32], *recognize_code;
 	int transaction_sock = *((int*)ptr);
+
 	int buf_len = recv(transaction_sock, buf, 32, 0);
-	usleep(5*1000);
 	if (buf_len<=0) {
 		printf("Client connection lost.\n");
 		close(transaction_sock);
 		return NULL;
 	}
+
+	usleep(50*1000);
+
 	recognize_code = replace_str(buf, "\n" ,"");
 	int i=0;
 	printf("recognize_code from client side. buf=%s\n", recognize_code);
@@ -109,6 +115,7 @@ void* map_client_side_socket_thread(void* ptr) {
 		if (strcmp(map_queue[i].recognize_code, recognize_code) == 0) {
 			map_queue[i].client_side_sock = transaction_sock;
 			pthread_mutex_unlock(&mutex);
+			printf("Recognize_code matched. recognize_code=%s\n", recognize_code);
 			return NULL;
 		}
 	}
@@ -124,23 +131,26 @@ void* map_client_side_socket_thread(void* ptr) {
 int push_and_wait_for_client(int* client_trans_sock, int user_sock, struct server_config config) {
 	char recognize_code[32];
 	char buf[48];
+	memset(buf, '\0', 48);
 	sprintf(recognize_code, "%d%d", (int)time(NULL), rand_interval(100000,999999));
 	sprintf(buf, "%s|%d|%s", recognize_code, config.client_side_lan_port, config.client_side_lan_ip);
-	if (send(notification_sock, buf, strlen(buf)+1, MSG_NOSIGNAL)<0){
+
+	pthread_mutex_lock(&mutex);
+
+	if (send(notification_sock, buf, 48, MSG_NOSIGNAL)<0){
 		printf("Client connection not found. Exiting...\n");
 		return -1;
 	}
+
 	printf("recognize_code sent. buf=%s\n", buf);
 	int i=0;
 	int flag = 0;
-	usleep(5*1000);
-	
-	pthread_mutex_lock(&mutex);
+	usleep(50*1000);
 
 	for (i=0;i<128;i++) {
-		if (map_queue[i].user_sock == 0 && map_queue[i].client_side_sock == 0 && map_queue[i].recognize_code == NULL) {
+		if (map_queue[i].user_sock == -1 && map_queue[i].client_side_sock == -1 && map_queue[i].recognize_code == NULL) {
 			map_queue[i].user_sock = user_sock;
-			map_queue[i].client_side_sock = 0;
+			map_queue[i].client_side_sock = -1;
 			map_queue[i].recognize_code = recognize_code;
 			flag = 1;
 			break;
@@ -155,14 +165,14 @@ int push_and_wait_for_client(int* client_trans_sock, int user_sock, struct serve
 	}
 	
 	int wait_count = 0;
-	while (map_queue[i].client_side_sock == 0) {
+	while (map_queue[i].client_side_sock == -1) {
 		usleep(1000);
 		wait_count++;
 		if (wait_count>=10*1000) {
-			printf("Client timeout.\n");
+			printf("Client timeout. recognize_code=%s\n", recognize_code);
 			pthread_mutex_lock(&mutex);
-			map_queue[i].user_sock = 0;
-			map_queue[i].client_side_sock = 0;
+			map_queue[i].user_sock = -1;
+			map_queue[i].client_side_sock = -1;
 			map_queue[i].recognize_code = NULL;
 			pthread_mutex_unlock(&mutex);
 
@@ -172,8 +182,8 @@ int push_and_wait_for_client(int* client_trans_sock, int user_sock, struct serve
 	printf("Client side connected. recognize_code=%s\n", recognize_code);
 	*client_trans_sock = map_queue[i].client_side_sock;
 	pthread_mutex_lock(&mutex);
-	map_queue[i].user_sock = 0;
-	map_queue[i].client_side_sock = 0;
+	map_queue[i].user_sock = -1;
+	map_queue[i].client_side_sock = -1;
 	map_queue[i].recognize_code = NULL;
 	pthread_mutex_unlock(&mutex);
 	return 1;
@@ -193,11 +203,13 @@ void* run_user_side_server(void* ptr){
 	listen(listen_sock, SOMAXCONN);
 	while (1) {
 		int trans_sock = accept(listen_sock, (struct sockaddr*)NULL, NULL);
+		conn_count++;
+		printf("Connection count=%d\n", conn_count);
 		tmp_bundle.user_sock = trans_sock;
 		tmp_bundle.config = config;
 		pthread_create(&tmp_thread, NULL, transaction_thread, (void*)&tmp_bundle);
 		pthread_detach(tmp_thread);
-		usleep(200*1000);
+		usleep(30*1000);
 	}
 
 	return NULL;
@@ -206,7 +218,7 @@ void* run_user_side_server(void* ptr){
 void *transaction_thread(void* thread_bundle) {
 	int user_sock = ((struct transact_bundle*)thread_bundle)->user_sock;
 	struct server_config config = ((struct transact_bundle*)thread_bundle)->config;
-	int client_sock = 0;
+	int client_sock = -1;
 	if (push_and_wait_for_client(&client_sock, user_sock, config) == -1){
 		close(user_sock);
 		close(client_sock);
@@ -274,10 +286,13 @@ void *transaction_thread(void* thread_bundle) {
 
 int main(int argc, char* argv[]) {
 	srand((int)time(NULL));
+
+	pthread_mutex_init(&mutex, NULL);
+
 	int i=0;
 	for (i=0;i<128;i++) {
-		map_queue[i].user_sock = 0;
-		map_queue[i].client_side_sock = 0;
+		map_queue[i].user_sock = -1;
+		map_queue[i].client_side_sock = -1;
 		map_queue[i].recognize_code = NULL;
 	}
 
@@ -309,6 +324,9 @@ int main(int argc, char* argv[]) {
 
 	while(1)
 		sleep(1);
+
+	pthread_mutex_destroy(&mutex);
+
 	return 0;
 }
 
