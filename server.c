@@ -197,7 +197,7 @@ void* run_user_side_server(void* ptr){
 		tmp_bundle.config = config;
 		pthread_create(&tmp_thread, NULL, transaction_thread, (void*)&tmp_bundle);
 		pthread_detach(tmp_thread);
-		usleep(20*1000);
+		usleep(200*1000);
 	}
 
 	return NULL;
