@@ -82,7 +82,7 @@ void *run_notification_client(void* ptr) {
 			pthread_create(&tmp_trans_thread, NULL, run_transaction, (void*)&tmp_conn_info);
 			pthread_detach(tmp_trans_thread);
 
-			usleep(50*1000);
+			usleep(20*1000);
 		}
 	}
 	return NULL;

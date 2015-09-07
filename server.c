@@ -45,6 +45,8 @@ struct socket_map map_queue[128];
 
 int notification_sock = 0;
 
+pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
+
 void *notification_server(void* ptr) {
 	int listen_sock = socket(AF_INET, SOCK_STREAM, 0);
 	struct sockaddr_in serv_addr;
@@ -97,15 +99,22 @@ void* map_client_side_socket_thread(void* ptr) {
 	recognize_code = replace_str(buf, "\n" ,"");
 	int i=0;
 	printf("recognize_code from client side. buf=%s\n", recognize_code);
+
+	pthread_mutex_lock(&mutex);
+
 	for (i=0;i<128;i++) {
 		if (map_queue[i].recognize_code == NULL) {
 			continue;
 		}
 		if (strcmp(map_queue[i].recognize_code, recognize_code) == 0) {
 			map_queue[i].client_side_sock = transaction_sock;
+			pthread_mutex_unlock(&mutex);
 			return NULL;
 		}
 	}
+
+	pthread_mutex_unlock(&mutex);	
+
 	printf("Recognize_code not found. Closing socket.\n");
 	close(transaction_sock);
 
@@ -126,6 +135,8 @@ int push_and_wait_for_client(int* client_trans_sock, int user_sock, struct serve
 	int flag = 0;
 	usleep(5*1000);
 	
+	pthread_mutex_lock(&mutex);
+
 	for (i=0;i<128;i++) {
 		if (map_queue[i].user_sock == 0 && map_queue[i].client_side_sock == 0 && map_queue[i].recognize_code == NULL) {
 			map_queue[i].user_sock = user_sock;
@@ -135,6 +146,9 @@ int push_and_wait_for_client(int* client_trans_sock, int user_sock, struct serve
 			break;
 		}
 	}
+
+	pthread_mutex_unlock(&mutex);
+
 	if (!flag) {
 		printf("Queue full!\n");
 		return -1;
@@ -146,17 +160,22 @@ int push_and_wait_for_client(int* client_trans_sock, int user_sock, struct serve
 		wait_count++;
 		if (wait_count>=10*1000) {
 			printf("Client timeout.\n");
+			pthread_mutex_lock(&mutex);
 			map_queue[i].user_sock = 0;
 			map_queue[i].client_side_sock = 0;
 			map_queue[i].recognize_code = NULL;
+			pthread_mutex_unlock(&mutex);
+
 			return -1;
 		}
 	}
 	printf("Client side connected. recognize_code=%s\n", recognize_code);
 	*client_trans_sock = map_queue[i].client_side_sock;
+	pthread_mutex_lock(&mutex);
 	map_queue[i].user_sock = 0;
 	map_queue[i].client_side_sock = 0;
 	map_queue[i].recognize_code = NULL;
+	pthread_mutex_unlock(&mutex);
 	return 1;
 }
 
@@ -178,7 +197,7 @@ void* run_user_side_server(void* ptr){
 		tmp_bundle.config = config;
 		pthread_create(&tmp_thread, NULL, transaction_thread, (void*)&tmp_bundle);
 		pthread_detach(tmp_thread);
-		usleep(50*1000);
+		usleep(20*1000);
 	}
 
 	return NULL;
